@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="sw">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Academic DMS</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #f1f5f9;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 antialiased min-h-screen">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // Initial Data Mock (Simulating Google Sheet: Access_Control_List)
+        const INITIAL_USERS = [
+            { id: 1, email: "john@gmail.com", name: "John Doe", requestedTime: new Date(Date.now() - 5 * 3600 * 1000).toISOString(), status: "APPROVED", lastSeen: new Date().toISOString(), role: "Student" },
+            { id: 2, email: "mary@gmail.com", name: "Mary J.", requestedTime: new Date(Date.now() - 12 * 3600 * 1000).toISOString(), status: "PENDING", lastSeen: new Date(Date.now() - 10 * 60 * 1000).toISOString(), role: "Student" },
+            { id: 3, email: "alex@gmail.com", name: "Alex M.", requestedTime: new Date(Date.now() - 30 * 3600 * 1000).toISOString(), status: "REMOVED", lastSeen: new Date(Date.now() - 24 * 3600 * 1000).toISOString(), role: "Student" },
+            { id: 4, email: "admin@dms.ac.tz", name: "System Admin", requestedTime: new Date(Date.now() - 100 * 3600 * 1000).toISOString(), status: "APPROVED", lastSeen: new Date().toISOString(), role: "Admin" }
+        ];
+
+        // Mock Drive Files structure
+        const INITIAL_FILES = {
+            "Year 1": {
+                "Semester 1": [
+                    { id: "f1", name: "CS111_Introduction_to_Programming.pdf", size: "2.4 MB", date: "2026-02-15", type: "pdf", url: "#" },
+                    { id: "f2", name: "MT100_Linear_Algebra_Notes.pdf", size: "1.8 MB", date: "2026-02-20", type: "pdf", url: "#" },
+                    { id: "f3", name: "CS112_Lab_Manual_Ex1.docx", size: "850 KB", date: "2026-03-01", type: "doc", url: "#" }
+                ],
+                "Semester 2": [
+                    { id: "f4", name: "CS121_Data_Structures.pdf", size: "3.1 MB", date: "2026-06-10", type: "pdf", url: "#" },
+                    { id: "f5", name: "CS122_Web_Development_Basics.zip", size: "14.2 MB", date: "2026-06-12", type: "zip", url: "#" }
+                ]
+            },
+            "Year 2": {
+                "Semester 1": [
+                    { id: "f6", name: "CS211_Database_Management_Systems.pdf", size: "4.5 MB", date: "2026-02-10", type: "pdf", url: "#" },
+                    { id: "f7", name: "CS212_Object_Oriented_Programming.pdf", size: "3.2 MB", date: "2026-02-18", type: "pdf", url: "#" }
+                ],
+                "Semester 2": [
+                    { id: "f8", name: "CS221_Software_Engineering_Principles.pdf", size: "2.9 MB", date: "2026-06-05", type: "pdf", url: "#" }
+                ]
+            },
+            "Year 3": {
+                "Semester 1": [
+                    { id: "f9", name: "CS311_Artificial_Intelligence.pdf", size: "5.1 MB", date: "2026-02-01", type: "pdf", url: "#" }
+                ],
+                "Semester 2": [
+                    { id: "f10", name: "CS329_Final_Year_Project_Guidelines.pdf", size: "1.2 MB", date: "2026-05-20", type: "pdf", url: "#" }
+                ]
+            }
+        };
+
+        function App() {
+            const [currentUser, setCurrentUser] = useState(() => {
+                const saved = localStorage.getItem('dms_user');
+                return saved ? JSON.parse(saved) : null;
+            });
+            const [usersList, setUsersList] = useState(INITIAL_USERS);
+            const [filesData, setFilesData] = useState(INITIAL_FILES);
+            const [selectedYear, setSelectedYear] = useState('Year 1');
+            const [selectedSemester, setSelectedSemester] = useState('Semester 1');
+            const [activeTab, setActiveTab] = useState('documents'); // 'documents', 'admin'
+            const [previewFile, setPreviewFile] = useState(null);
+            const [uploadModalOpen, setUploadModalOpen] = useState(false);
+            const [notification, setNotification] = useState(null);
+
+            const showNotification = (msg, type = "info") => {
+                setNotification({ msg, type });
+                setTimeout(() => setNotification(null), 4000);
+            };
+
+            // Check Access Logic (SRS Section 8.B)
+            const checkUserAccess = (user) => {
+                if (!user) return 'NO_USER';
+                const now = new Date().getTime();
+                const reqTime = new Date(user.requestedTime).getTime();
+                const hoursPassed = (now - reqTime) / (1000 * 60 * 60);
+
+                if (user.status === 'REMOVED' || user.status === 'BLOCKED') {
+                    return 'DENY_ACCESS';
+                }
+                if (user.status === 'APPROVED') {
+                    return 'GRANT_ACCESS';
+                }
+                if (user.status === 'PENDING' && hoursPassed <= 24) {
+                    return 'TEMPORARY_ACCESS';
+                }
+                return 'DENY_ACCESS'; // Pending > 24 Hours or unknown status
+            };
+
+            // Periodic Heartbeat Check (SRS Section 8.A)
+            useEffect(() => {
+                if (!currentUser) return;
+
+                const updateLastSeen = () => {
+                    const currentTime = new Date().toISOString();
+                    setUsersList(prevUsers => {
+                        const updated = prevUsers.map(u => {
+                            if (u.email.toLowerCase() === currentUser.email.toLowerCase()) {
+                                return { ...u, lastSeen: currentTime };
+                            }
+                            return u;
+                        });
+                        return updated;
+                    });
+                    
+                    // Verify if current user status was revoked by Admin in the backend/sheet
+                    const matchedUser = usersList.find(u => u.email.toLowerCase() === currentUser.email.toLowerCase());
+                    if (matchedUser) {
+                        const accessStatus = checkUserAccess(matchedUser);
+                        if (accessStatus === 'DENY_ACCESS') {
+                            handleLogout("Access revoked by administrator or trial expired.");
+                        }
+                    }
+                };
+
+                // Heartbeat on mount
+                updateLastSeen();
+
+                // Repeat every 2 minutes (120,000 ms) as specified
+                const interval = setInterval(updateLastSeen, 120000);
+                return () => clearInterval(interval);
+            }, [currentUser?.email]);
+
+            const handleLogin = (name, email) => {
+                const existingUser = usersList.find(u => u.email.toLowerCase() === email.toLowerCase());
+                let userObj;
+
+                if (existingUser) {
+                    userObj = { ...existingUser, lastSeen: new Date().toISOString() };
+                } else {
+                    userObj = {
+                        id: Date.now(),
+                        email: email,
+                        name: name,
+                        requestedTime: new Date().toISOString(),
+                        status: "PENDING",
+                        lastSeen: new Date().toISOString(),
+                        role: email.includes("admin") ? "Admin" : "Student"
+                    };
+                    setUsersList(prev => [...prev, userObj]);
+                }
+
+                const accessStatus = checkUserAccess(userObj);
+                if (accessStatus === 'DENY_ACCESS') {
+                    showNotification("Akaunti yako haina ruhusa au masaa 24 yamepita bila idhini. Wasiliana na Admin.", "error");
+                    return;
+                }
+
+                setCurrentUser(userObj);
+                localStorage.setItem('dms_user', JSON.stringify(userObj));
+                showNotification(`Karibu, ${userObj.name}!`, "success");
+            };
+
+            const handleLogout = (reason = "") => {
+                setCurrentUser(null);
+                localStorage.removeItem('dms_user');
+                if (reason) showNotification(reason, "warning");
+                else showNotification("Umetoka kwenye mfumo kikamilifu.", "info");
+            };
+
+            // Admin Actions
+            const updateUserStatus = (userId, newStatus) => {
+                setUsersList(prev => prev.map(u => {
+                    if (u.id === userId) {
+                        return { ...u, status: newStatus };
+                    }
+                    return u;
+                }));
+                showNotification(`Status updated to ${newStatus}`, "success");
+            };
+
+            // File Upload Mock
+            const handleFileUpload = (fileName, year, semester) => {
+                const newFile = {
+                    id: 'f' + Date.now(),
+                    name: fileName.endsWith('.pdf') ? fileName : fileName + '.pdf',
+                    size: '1.5 MB',
+                    date: new Date().toISOString().split('T')[0],
+                    type: 'pdf',
+                    url: '#'
+                };
+
+                setFilesData(prev => ({
+                    ...prev,
+                    [year]: {
+                        ...prev[year],
+                        [semester]: [...(prev[year][semester] || []), newFile]
+                    }
+                }));
+
+                setUploadModalOpen(false);
+                showNotification("Faili limepakiwa kikamilifu kwenye Google Drive!", "success");
+            };
+
+            // Helper to determine if user is online (SRS 8.C)
+            const isUserOnline = (lastSeenTimestamp) => {
+                if (!lastSeenTimestamp) return false;
+                const currentTime = new Date().getTime();
+                const lastSeenTime = new Date(lastSeenTimestamp).getTime();
+                const minutesDifference = (currentTime - lastSeenTime) / (1000 * 60);
+                return minutesDifference <= 3;
+            };
+
+            // If not logged in, render Login Page
+            if (!currentUser) {
+                return <LoginPage onLogin={handleLogin} notification={notification} />;
+            }
+
+            const currentAccessState = checkUserAccess(currentUser);
+            if (currentAccessState === 'DENY_ACCESS') {
+                return (
+                    <div className="min-h-screen flex items-center justify-center bg-slate-100 p-4">
+                        <div className="max-w-md w-full bg-white rounded-xl shadow-lg p-8 text-center border border-slate-200">
+                            <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <i className="fa-solid fa-lock text-2xl"></i>
+                            </div>
+                            <h2 className="text-2xl font-bold text-slate-800 mb-2">Access Revoked / Expired</h2>
+                            <p className="text-slate-600 mb-6 text-sm">
+                                Akiba au muda wako wa kujaribu mfumo (Saa 24) umemalizika, au ombi lako halijaidhinishwa na Admin.
+                            </p>
+                            <button 
+                                onClick={() => handleLogout()}
+                                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2.5 rounded-lg transition duration-200 shadow"
+                            >
+                                Rudi Kwenye Login
+                            </button>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="min-h-screen flex flex-col">
+                    {/* Top Header */}
+                    <header className="bg-indigo-900 text-white shadow-md sticky top-0 z-30">
+                        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+                            <div className="flex items-center space-x-3">
+                                <div className="p-2 bg-indigo-800 rounded-lg">
+                                    <i className="fa-solid fa-graduation-cap text-xl text-indigo-300"></i>
+                                </div>
+                                <div>
+                                    <h1 className="font-bold text-lg leading-tight">Student Academic DMS</h1>
+                                    <p className="text-xs text-indigo-300 hidden sm:block">Google Drive & Sheets Driven System</p>
+                                </div>
+                            </div>
+
+                            <div className="flex items-center space-x-4">
+                                {currentUser.role === 'Admin' && (
+                                    <div className="flex bg-indigo-950 p-1 rounded-lg border border-indigo-700/50">
+                                        <button 
+                                            onClick={() => setActiveTab('documents')}
+                                            className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'documents' ? 'bg-indigo-600 text-white shadow' : 'text-indigo-200 hover:text-white'}`}
+                                        >
+                                            <i className="fa-solid fa-folder-open mr-1.5"></i> Nyaraka
+                                        </button>
+                                        <button 
+                                            onClick={() => setActiveTab('admin')}
+                                            className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${activeTab === 'admin' ? 'bg-indigo-600 text-white shadow' : 'text-indigo-200 hover:text-white'}`}
+                                        >
+                                            <i className="fa-solid fa-[#00ffcc] fa-user-shield mr-1.5"></i> Admin Dashboard
+                                        </button>
+                                    </div>
+                                )}
+
+                                <div className="flex items-center space-x-3 pl-2 border-l border-indigo-800">
+                                    <div className="text-right hidden md:block">
+                                        <div className="text-xs font-semibold">{currentUser.name}</div>
+                                        <div className="text-[10px] text-indigo-300 flex items-center justify-end gap-1">
+                                            <span className="inline-block w-2 h-2 rounded-full bg-emerald-400"></span>
+                                            {currentUser.role}
+                                        </div>
+                                    </div>
+                                    <button 
+                                        onClick={() => handleLogout()}
+                                        title="Orodhesha Toka"
+                                        className="p-2 text-indigo-200 hover:text-white hover:bg-indigo-800 rounded-lg transition"
+                                    >
+                                        <i className="fa-solid fa-right-from-bracket"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </header>
+
+                    {/* Temporary Notification Toast */}
+                    {notification && (
+                        <div className={`fixed bottom-4 right-4 z-50 px-4 py-3 rounded-lg shadow-xl text-sm font-medium flex items-center space-x-2 text-white ${
+                            notification.type === 'error' ? 'bg-red-600' :
+                            notification.type === 'warning' ? 'bg-amber-600' :
+                            notification.type === 'success' ? 'bg-emerald-600' : 'bg-slate-800'
+                        }`}>
+                            <i className="fa-solid fa-circle-info"></i>
+                            <span>{notification.msg}</span>
+                        </div>
+                    )}
+
+                    {/* Temporary 24 Hour Trial Warning Banner */}
+                    {currentAccessState === 'TEMPORARY_ACCESS' && (
+                        <div className="bg-amber-500/10 border-b border-amber-500/20 text-amber-800 px-4 py-2 text-xs text-center flex items-center justify-center space-x-2">
+                            <i className="fa-solid fa-clock-rotate-left"></i>
+                            <span>Akaunti yako ipo kwenye jaribio la Masaa 24 (PENDING). Subiri idhini ya Admin kwa access ya kudumu.</span>
+                        </div>
+                    )}
+
+                    {/* Main Content Area */}
+                    <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+                        {activeTab === 'documents' ? (
+                            <div className="space-y-6">
+                                {/* Academic Year & Semester Selector */}
+                                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider mr-2">Mwaka:</span>
+                                        {['Year 1', 'Year 2', 'Year 3'].map(year => (
+                                            <button
+                                                key={year}
+                                                onClick={() => setSelectedYear(year)}
+                                                className={`px-4 py-2 text-sm font-medium rounded-lg transition ${
+                                                    selectedYear === year 
+                                                        ? 'bg-indigo-600 text-white shadow-sm' 
+                                                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                                }`}
+                                            >
+                                                <i className="fa-solid fa-folder mr-1.5 opacity-70"></i>
+                                                {year}
+                                            </button>
+                                        ))}
+                                    </div>
+
+                                    <div className="flex items-center space-x-2 border-t md:border-t-0 pt-3 md:pt-0 border-slate-100">
+                                        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider mr-2">Muhula:</span>
+                                        {['Semester 1', 'Semester 2'].map(sem => (
+                                            <button
+                                                key={sem}
+                                                onClick={() => setSelectedSemester(sem)}
+                                                className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${
+                                                    selectedSemester === sem 
+                                                        ? 'bg-slate-800 text-white' 
+                                                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                                }`}
+                                            >
+                                                {sem}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Folder Path Breadcrumb & Actions */}
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center space-x-2 text-sm text-slate-600">
+                                        <i className="fa-brands fa-google-drive text-emerald-600"></i>
+                                        <span className="font-semibold text-slate-800">Main_Drive_Folder</span>
+                                        <i className="fa-solid fa-chevron-right text-xs text-slate-400"></i>
+                                        <span className="text-indigo-600 font-medium">{selectedYear}</span>
+                                        <i className="fa-solid fa-chevron-right text-xs text-slate-400"></i>
+                                        <span className="text-indigo-600 font-medium">{selectedSemester}</span>
+                                    </div>
+
+                                    <button 
+                                        onClick={() => setUploadModalOpen(true)}
+                                        className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium px-4 py-2 rounded-lg transition shadow-sm flex items-center space-x-2"
+                                    >
+                                        <i className="fa-solid fa-cloud-arrow-up"></i>
+                                        <span>Pakia Document</span>
+                                    </button>
+                                </div>
+
+                                {/* Files Grid / List */}
+                                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                                    <div className="p-4 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+                                        <h3 className="font-semibold text-slate-700 text-sm flex items-center gap-2">
+                                            <i className="fa-solid fa-file-lines text-indigo-500"></i>
+                                            Nyaraka Zilizopo ({filesData[selectedYear]?.[selectedSemester]?.length || 0})
+                                        </h3>
+                                        <span className="text-xs text-slate-400">Synced with Google Drive API v3</span>
+                                    </div>
+
+                                    <div className="divide-y divide-slate-100">
+                                        {(filesData[selectedYear]?.[selectedSemester] || []).length === 0 ? (
+                                            <div className="p-12 text-center text-slate-400">
+                                                <i className="fa-regular fa-folder-open text-4xl mb-3 text-slate-300"></i>
+                                                <p className="text-sm">Hakuna nyaraka zilizopakiwa kwenye muhula huu.</p>
+                                            </div>
+                                        ) : (
+                                            filesData[selectedYear][selectedSemester].map(file => (
+                                                <div key={file.id} className="p-4 hover:bg-slate-50 transition flex items-center justify-between group">
+                                                    <div className="flex items-center space-x-3">
+                                                        <div className="w-10 h-10 rounded-lg bg-red-50 text-red-600 flex items-center justify-center font-bold text-xs">
+                                                            <i className="fa-solid fa-file-pdf text-lg"></i>
+                                                        </div>
+                                                        <div>
+                                                            <h4 className="text-sm font-medium text-slate-800 group-hover:text-indigo-600 transition">
+                                                                {file.name}
+                                                            </h4>
+                                                            <div className="flex items-center space-x-3 text-xs text-slate-400 mt-0.5">
+                                                                <span>{file.size}</span>
+                                                                <span>•</span>
+                                                                <span>Ukubwa: {file.date}</span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="flex items-center space-x-2">
+                                                        <button 
+                                                            onClick={() => setPreviewFile(file)}
+                                                            className="px-3 py-1.5 text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-md transition flex items-center space-x-1"
+                                                            title="Preview"
+                                                        >
+                                                            <i className="fa-solid fa-eye"></i>
+                                                            <span className="hidden sm:inline">Preview</span>
+                                                        </button>
+                                                        <a 
+                                                            href={file.url}
+                                                            download
+                                                            onClick={(e) => {
+                                                                e.preventDefault();
+                                                                showNotification(`Pakua ilianza kwa ${file.name}`, "info");
+                                                            }}
+                                                            className="px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-md transition flex items-center space-x-1"
+                                                            title="Download"
+                                                        >
+                                                            <i className="fa-solid fa-download"></i>
+                                                            <span className="hidden sm:inline">Pakua</span>
+                                                        </a>
+                                                    </div>
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        ) : (
+                            /* Admin Management View (SRS Section 3 & 4) */
+                            <div className="space-y-6">
+                                <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+                                        <div>
+                                            <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                                                <i className="fa-solid fa-users-gear text-indigo-600"></i>
+                                                Usimamizi wa Watumiaji (Access_Control_List)
+                                            </h2>
+                                            <p className="text-xs text-slate-500 mt-1">
+                                                Inasoma na kuhifadhi taarifa moja kwa moja Google Sheets API v4.
+                                            </p>
+                                        </div>
+                                        <div className="flex items-center space-x-3 text-xs">
+                                            <div className="flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg border border-emerald-200">
+                                                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                                                <span className="font-medium">
+                                                    Online: {usersList.filter(u => isUserOnline(u.lastSeen)).length}
+                                                </span>
+                                            </div>
+                                            <div className="flex items-center space-x-1.5 px-3 py-1.5 bg-slate-50 text-slate-600 rounded-lg border border-slate-200">
+                                                <span className="font-medium">Jumla: {usersList.length}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Users Table */}
+                                    <div className="overflow-x-auto custom-scrollbar">
+                                        <table className="w-full text-left text-xs border-collapse">
+                                            <thead>
+                                                <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase tracking-wider">
+                                                    <th className="p-3">Hali (Presence)</th>
+                                                    <th className="p-3">User Name & Email</th>
+                                                    <th className="p-3">Requested Time</th>
+                                                    <th className="p-3">Last Seen</th>
+                                                    <th className="p-3">Status</th>
+                                                    <th className="p-3">Role</th>
+                                                    <th className="p-3 text-right">Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100">
+                                                {usersList.map(u => {
+                                                    const online = isUserOnline(u.lastSeen);
+                                                    return (
+                                                        <tr key={u.id} className="hover:bg-slate-50 transition">
+                                                            <td className="p-3">
+                                                                <div className="flex items-center space-x-1.5">
+                                                                    <span className={`w-2.5 h-2.5 rounded-full ${online ? 'bg-emerald-500 shadow-sm' : 'bg-slate-300'}`}></span>
+                                                                    <span className="text-[11px] text-slate-500">{online ? 'Active' : 'Offline'}</span>
+                                                                </div>
+                                                            </td>
+                                                            <td className="p-3">
+                                                                <div className="font-semibold text-slate-800">{u.name}</div>
+                                                                <div className="text-slate-400">{u.email}</div>
+                                                            </td>
+                                                            <td className="p-3 text-slate-500">
+                                                                {new Date(u.requestedTime).toLocaleString()}
+                                                            </td>
+                                                            <td className="p-3 text-slate-500">
+                                                                {u.lastSeen ? new Date(u.lastSeen).toLocaleTimeString() : 'N/A'}
+                                                            </td>
+                                                            <td className="p-3">
+                                                                <span className={`px-2 py-0.5 rounded-full font-medium text-[10px] uppercase tracking-wide ${
+                                                                    u.status === 'APPROVED' ? 'bg-emerald-100 text-emerald-800' :
+                                                                    u.status === 'PENDING' ? 'bg-amber-100 text-amber-800' :
+                                                                    'bg-red-100 text-red-800'
+                                                                }`}>
+                                                                    {u.status}
+                                                                </span>
+                                                            </td>
+                                                            <td className="p-3 text-slate-600 font-medium">{u.role}</td>
+                                                            <td className="p-3 text-right">
+                                                                <div className="flex items-center justify-end space-x-1">
+                                                                    {u.status !== 'APPROVED' && (
+                                                                        <button 
+                                                                            onClick={() => updateUserStatus(u.id, 'APPROVED')}
+                                                                            className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded transition font-medium text-[11px]"
+                                                                            title="Approve User"
+                                                                        >
+                                                                            Approve
+                                                                        </button>
+                                                                    )}
+                                                                    {u.status !== 'BLOCKED' && (
+                                                                        <button 
+                                                                            onClick={() => updateUserStatus(u.id, 'BLOCKED')}
+                                                                            className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-700 rounded transition font-medium text-[11px]"
+                                                                            title="Block Access"
+                                                                        >
+                                                                            Block
+                                                                        </button>
+                                                                    )}
+                                                                    <button 
+                                                                        onClick={() => updateUserStatus(u.id, 'REMOVED')}
+                                                                        className="px-2 py-1 bg-red-50 hover:bg-red-100 text-red-700 rounded transition font-medium text-[11px]"
+                                                                        title="Remove / Revoke Access"
+                                                                    >
+                                                                        Remove
+                                                                    </button>
+                                                                </div>
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </main>
+
+                    {/* Preview Modal */}
+                    {previewFile && (
+                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                            <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full overflow-hidden flex flex-col max-h-[85vh]">
+                                <div className="p-4 bg-slate-800 text-white flex items-center justify-between">
+                                    <div className="flex items-center space-x-2 overflow-hidden">
+                                        <i className="fa-solid fa-file-pdf text-red-400"></i>
+                                        <span className="font-semibold text-sm truncate">{previewFile.name}</span>
+                                    </div>
+                                    <button 
+                                        onClick={() => setPreviewFile(null)}
+                                        className="text-slate-400 hover:text-white p-1 rounded"
+                                    >
+                                        <i className="fa-solid fa-xmark text-lg"></i>
+                                    </button>
+                                </div>
+                                <div className="p-8 flex-1 bg-slate-100 flex flex-col items-center justify-center text-center">
+                                    <div className="w-20 h-20 bg-white rounded-2xl shadow-md flex items-center justify-center mb-4 text-indigo-600">
+                                        <i className="fa-solid fa-file-invoice text-3xl"></i>
+                                    </div>
+                                    <h3 className="font-bold text-slate-800 text-base mb-1">{previewFile.name}</h3>
+                                    <p className="text-slate-500 text-xs mb-6">Google Drive Preview Player Mode</p>
+                                    <div className="bg-white p-4 rounded-lg border border-slate-200 text-left text-xs text-slate-600 max-w-md w-full space-y-2">
+                                        <p><strong>Ukubwa:</strong> {previewFile.size}</p>
+                                        <p><strong>Tarehe ya Kupakiwa:</strong> {previewFile.date}</p>
+                                        <p><strong>Hali:</strong> Ready for stream/read</p>
+                                    </div>
+                                </div>
+                                <div className="p-3 bg-slate-50 border-t border-slate-200 flex justify-end">
+                                    <button 
+                                        onClick={() => setPreviewFile(null)}
+                                        className="px-4 py-2 bg-slate-200 text-slate-700 text-xs font-medium rounded-lg hover:bg-slate-300 transition"
+                                    >
+                                        Funga
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Upload Document Modal */}
+                    {uploadModalOpen && (
+                        <UploadModal 
+                            selectedYear={selectedYear} 
+                            selectedSemester={selectedSemester} 
+                            onClose={() => setUploadModalOpen(false)} 
+                            onUpload={handleFileUpload} 
+                        />
+                    )}
+                </div>
+            );
+        }
+
+        // Login Page Component
+        function LoginPage({ onLogin, notification }) {
+            const [name, setName] = useState('');
+            const [email, setEmail] = useState('');
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                if (!name || !email) return;
+                onLogin(name, email);
+            };
+
+            return (
+                <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 relative overflow-hidden">
+                    {/* Background decoration */}
+                    <div className="absolute -top-40 -right-40 w-96 h-96 bg-indigo-600/20 rounded-full blur-3xl pointer-events-none"></div>
+                    <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-emerald-600/20 rounded-full blur-3xl pointer-events-none"></div>
+
+                    <div className="max-w-md w-full bg-white rounded-2xl shadow-2xl p-8 relative z-10 border border-slate-100">
+                        <div className="text-center mb-8">
+                            <div className="w-14 h-14 bg-indigo-600 text-white rounded-xl flex items-center justify-center mx-auto mb-3 shadow-lg shadow-indigo-600/30">
+                                <i className="fa-solid fa-graduation-cap text-2xl"></i>
+                            </div>
+                            <h2 className="text-2xl font-bold text-slate-900">Academic DMS Portal</h2>
+                            <p className="text-xs text-slate-500 mt-1">Ingiza taarifa zako kuomba au kupata hifadhi ya masomo</p>
+                        </div>
+
+                        {notification && (
+                            <div className={`mb-4 p-3 rounded-lg text-xs font-medium ${notification.type === 'error' ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-slate-100 text-slate-700'}`}>
+                                {notification.msg}
+                            </div>
+                        )}
+
+                        <form onSubmit={handleSubmit} className="space-y-4">
+                            <div>
+                                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Majina Kamili</label>
+                                <div className="relative">
+                                    <i className="fa-solid fa-user absolute left-3 top-3 text-slate-400 text-xs"></i>
+                                    <input 
+                                        type="text" 
+                                        required 
+                                        value={name}
+                                        onChange={(e) => setName(e.target.value)}
+                                        placeholder="mf. John Doe" 
+                                        className="w-full pl-9 pr-3 py-2.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-600 transition"
+                                    />
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">Barua Pepe (Email)</label>
+                                <div className="relative">
+                                    <i className="fa-solid fa-envelope absolute left-3 top-3 text-slate-400 text-xs"></i>
+                                    <input 
+                                        type="email" 
+                                        required 
+                                        value={email}
+                                        onChange={(e) => setEmail(e.target.value)}
+                                        placeholder="student@gmail.com" 
+                                        className="w-full pl-9 pr-3 py-2.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-600 transition"
+                                    />
+                                </div>
+                                <span className="text-[10px] text-slate-400 mt-1 block">
+                                    *Kuingia kama Admin, tumia barua pepe yenye neno "admin" (mf. admin@dms.ac.tz)
+                                </span>
+                            </div>
+
+                            <button 
+                                type="submit" 
+                                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-lg transition duration-200 shadow-md shadow-indigo-600/20 text-sm flex items-center justify-center space-x-2"
+                            >
+                                <span>Tuma Ombi / Ingia Mfumoni</span>
+                                <i className="fa-solid fa-arrow-right text-xs"></i>
+                            </button>
+                        </form>
+
+                        <div className="mt-6 pt-6 border-t border-slate-100 text-center">
+                            <p className="text-[11px] text-slate-400">
+                                Watumiaji wapya wanapata ufikiaji wa saa 24 kabla ya uthibitisho wa Admin.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // Upload Document Modal Component
+        function UploadModal({ selectedYear, selectedSemester, onClose, onUpload }) {
+            const [fileName, setFileName] = useState('');
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                if (!fileName) return;
+                onUpload(fileName, selectedYear, selectedSemester);
+            };
+
+            return (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden">
+                        <div className="p-4 bg-indigo-900 text-white flex items-center justify-between">
+                            <h3 className="font-bold text-sm flex items-center gap-2">
+                                <i className="fa-solid fa-cloud-arrow-up"></i> Pakia Document Mpya
+                            </h3>
+                            <button onClick={onClose} className="text-indigo-200 hover:text-white">
+                                <i className="fa-solid fa-xmark"></i>
+                            </button>
+                        </div>
+                        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+                            <div>
+                                <label className="block text-xs font-semibold text-slate-600 mb-1">Eneo la Hifadhi</label>
+                                <div className="text-xs font-medium text-indigo-700 bg-indigo-50 p-2.5 rounded-lg border border-indigo-100 flex items-center space-x-2">
+                                    <i className="fa-solid fa-folder-tree"></i>
+                                    <span>{selectedYear} &gt; {selectedSemester}</span>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-semibold text-slate-600 mb-1">Jina la Document/Somo</label>
+                                <input 
+                                    type="text" 
+                                    required 
+                                    value={fileName}
+                                    onChange={(e) => setFileName(e.target.value)}
+                                    placeholder="mf. CS111_Lecture_1.pdf" 
+                                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-600"
+                                />
+                            </div>
+
+                            <div className="border-2 border-dashed border-slate-200 rounded-xl p-6 text-center bg-slate-50">
+                                <i className="fa-solid fa-file-arrow-up text-3xl text-slate-300 mb-2"></i>
+                                <p className="text-xs text-slate-500">Chagua faili kutoka kwenye kifaa chako</p>
+                                <span className="text-[10px] text-slate-400 block mt-1">(Google Drive API Direct Stream)</span>
+                            </div>
+
+                            <div className="flex items-center justify-end space-x-2 pt-2">
+                                <button 
+                                    type="button" 
+                                    onClick={onClose} 
+                                    className="px-4 py-2 bg-slate-100 text-slate-600 text-xs font-medium rounded-lg hover:bg-slate-200"
+                                >
+                                    Ghairi
+                                </button>
+                                <button 
+                                    type="submit" 
+                                    className="px-4 py-2 bg-indigo-600 text-white text-xs font-medium rounded-lg hover:bg-indigo-700"
+                                >
+                                    Pakia Sasa
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            );
+        }
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>
